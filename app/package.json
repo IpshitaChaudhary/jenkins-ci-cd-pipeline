@@ -1,0 +1,16 @@
+{
+  "name": "inventory-api",
+  "version": "1.0.0",
+  "description": "Small Express API used as the workload for the Jenkins CI/CD pipeline",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "license": "MIT"
+}

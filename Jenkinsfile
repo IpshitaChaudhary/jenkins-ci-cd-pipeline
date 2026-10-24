@@ -1,6 +1,6 @@
 // Declarative pipeline for inventory-api.
-// Stages added so far: checkout -> install -> unit tests -> SonarQube analysis -> image build.
-// Quality gate, Trivy and the Kubernetes deploy are added as later stages.
+// Stages added so far: checkout -> install -> unit tests -> SonarQube analysis -> quality gate -> image build.
+// Trivy and the Kubernetes deploy are added as later stages.
 pipeline {
   agent any
 
@@ -77,6 +77,17 @@ pipeline {
           dir(env.APP_DIR) {
             sh 'SONAR_TOKEN="$SONAR_AUTH_TOKEN" sonar-scanner -Dsonar.projectVersion="$IMAGE_TAG"'
           }
+        }
+      }
+    }
+
+    // Placed before the image build on purpose: code that fails the gate never becomes an image.
+    // SonarQube reports the result back through a webhook to <jenkins>/sonarqube-webhook/,
+    // so this waits for that callback instead of polling.
+    stage('Quality gate') {
+      steps {
+        timeout(time: 5, unit: 'MINUTES') {
+          waitForQualityGate abortPipeline: true
         }
       }
     }

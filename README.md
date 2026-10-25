@@ -9,14 +9,15 @@ End-to-end CI/CD with Jenkins for a small Node.js service: unit tests, a SonarQu
 | Checkout, install, unit tests (JUnit + coverage published) | Done |
 | Docker image build (multi-stage, non-root, health check) | Done |
 | SonarQube analysis + quality gate (blocks the image build) | Done |
-| Trivy image scan (fail on HIGH/CRITICAL) | Next |
-| Push to registry, deploy to Kubernetes | Planned |
+| Trivy image scan (fails on fixable HIGH/CRITICAL, full report in Jenkins) | Done |
+| Push to registry, deploy to Kubernetes | Next |
 
 ## Layout
 
 ```
 .
 ├── Jenkinsfile           # declarative pipeline
+├── .trivyignore          # accepted CVEs (reason, owner, expiry) - empty for now
 ├── ci/                   # local Jenkins + SonarQube (docker compose)
 │   ├── docker-compose.yml
 │   └── jenkins/          # Jenkins LTS + Docker CLI + plugins.txt
@@ -76,4 +77,7 @@ One-time wiring:
 - **Image tags are the short commit SHA**, never `latest`, so every running image maps to exactly one commit.
 - **Tests run in a throwaway `node:20-alpine` container**, so the Jenkins agent needs only Docker, not a Node toolchain.
 - **Quality gate before the image build.** Code that fails the SonarQube gate never becomes an image, so nothing downstream (scan, registry, cluster) ever sees it.
+- **Image scan gates the push, not just reports.** Trivy runs twice against the same cached DB: a non-blocking pass that publishes *every* finding as JUnit (so each build shows its vulnerability list next to the unit tests), then the gate, which fails only on HIGH/CRITICAL that already have a fixed version. Unfixed CVEs stay visible without blocking, because there's nothing to upgrade to yet.
+- **Accepting a CVE is a reviewed change.** `.trivyignore` entries need a reason, an owner and an expiry date, and go through a PR like code.
+- **Pinned scanner version.** `TRIVY_VERSION` is fixed so two builds of the same commit can't get different results from a silent scanner upgrade; bump it deliberately.
 - **No secrets in the repo.** The SonarQube URL and token come from `withSonarQubeEnv`; `sonar-project.properties` holds only project settings. Registry credentials will use Jenkins credentials bindings the same way.

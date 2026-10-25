@@ -111,16 +111,29 @@ pipeline {
         // Trivy reads the local image through the Docker socket; the named volume keeps its
         // vulnerability DB between builds so each scan doesn't re-download it.
         sh '''
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v trivy-cache:/root/.cache/ \
-            "aquasec/trivy:$TRIVY_VERSION" image \
-              --no-progress \
-              --ignore-unfixed \
-              --severity HIGH,CRITICAL \
-              --exit-code 1 \
-              "$IMAGE_NAME:$IMAGE_TAG"
+          mkdir -p reports
+          trivy() {
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v trivy-cache:/root/.cache/ \
+              -v "$WORKSPACE/.trivyignore:/.trivyignore:ro" \
+              "aquasec/trivy:$TRIVY_VERSION" image --no-progress --ignorefile /.trivyignore "$@"
+          }
+
+          # 1) Full report, every severity, never fails: published as test results below so each
+          #    finding is visible per build. Written via stdout so no root-owned files land in the
+          #    workspace.
+          trivy --format template --template "@contrib/junit.tpl" --exit-code 0 \
+            "$IMAGE_NAME:$IMAGE_TAG" > reports/trivy-junit.xml
+
+          # 2) The gate. Reuses the cached DB, so this second pass is quick.
+          trivy --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 "$IMAGE_NAME:$IMAGE_TAG"
         '''
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'reports/trivy-junit.xml'
+        }
       }
     }
   }

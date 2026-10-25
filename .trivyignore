@@ -1,0 +1,13 @@
+# Vulnerabilities accepted on purpose, so the Trivy gate doesn't block on them.
+#
+# Rules for adding an entry (reviewed in the PR like any other code change):
+#   - one CVE per line, with a comment above it saying WHY it's safe to accept
+#     (e.g. "code path not reachable: we never parse untrusted XML"),
+#   - who accepted it and an expiry date - revisit it then, don't let it rot,
+#   - never ignore something just to get a build green; upgrade the package or base image first.
+#
+# Example:
+#   # Not reachable: only affects the CLI tool, not the library we import. Accepted by <name>, review by 2027-01-31.
+#   CVE-2024-00000
+#
+# (empty: nothing accepted yet)

@@ -1,6 +1,7 @@
 // Declarative pipeline for inventory-api.
-// Stages added so far: checkout -> install -> unit tests -> SonarQube analysis -> quality gate -> image build.
-// Trivy and the Kubernetes deploy are added as later stages.
+// Stages added so far: checkout -> install -> unit tests -> SonarQube analysis -> quality gate ->
+// image build -> Trivy scan.
+// Registry push and the Kubernetes deploy are added as later stages.
 pipeline {
   agent any
 
@@ -17,6 +18,8 @@ pipeline {
     // Short commit SHA as the image tag, so every build is traceable to a commit
     // and tags are never reused.
     IMAGE_TAG  = "${env.GIT_COMMIT ? env.GIT_COMMIT.take(7) : env.BUILD_NUMBER}"
+    // Pinned so a new Trivy release can't change scan results between two builds of the same commit.
+    TRIVY_VERSION = '0.56.2'
   }
 
   stages {
@@ -97,6 +100,27 @@ pipeline {
         dir(env.APP_DIR) {
           sh 'docker build --pull -t "$IMAGE_NAME:$IMAGE_TAG" .'
         }
+      }
+    }
+
+    // Scans the image that was just built (OS packages + npm dependencies) and fails the
+    // build on HIGH/CRITICAL findings that already have a fix. Unfixed CVEs are not
+    // actionable yet, so they are reported but don't block.
+    stage('Trivy image scan') {
+      steps {
+        // Trivy reads the local image through the Docker socket; the named volume keeps its
+        // vulnerability DB between builds so each scan doesn't re-download it.
+        sh '''
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache/ \
+            "aquasec/trivy:$TRIVY_VERSION" image \
+              --no-progress \
+              --ignore-unfixed \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              "$IMAGE_NAME:$IMAGE_TAG"
+        '''
       }
     }
   }

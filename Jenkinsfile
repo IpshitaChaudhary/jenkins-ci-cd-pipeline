@@ -1,7 +1,7 @@
 // Declarative pipeline for inventory-api.
 // Stages added so far: checkout -> install -> unit tests -> SonarQube analysis -> quality gate ->
-// image build -> Trivy scan.
-// Registry push and the Kubernetes deploy are added as later stages.
+// image build -> Trivy scan -> push (main only).
+// The Kubernetes deploy is added as a later stage.
 pipeline {
   agent any
 
@@ -10,6 +10,11 @@ pipeline {
     timeout(time: 30, unit: 'MINUTES')
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+
+  parameters {
+    // Where images are pushed, e.g. docker.io/<user> or <account>.dkr.ecr.<region>.amazonaws.com
+    string(name: 'REGISTRY', defaultValue: 'docker.io/CHANGE-ME', description: 'Image registry/namespace to push to')
   }
 
   environment {
@@ -133,6 +138,35 @@ pipeline {
       post {
         always {
           junit allowEmptyResults: true, testResults: 'reports/trivy-junit.xml'
+        }
+      }
+    }
+
+    // Only main ships. Other branches still get tests, SonarQube and Trivy feedback, but
+    // never produce a pushed image.
+    stage('Push image') {
+      when {
+        expression { env.GIT_BRANCH in ['main', 'origin/main'] }
+      }
+      steps {
+        // 'registry-creds' is a Jenkins "Username with password" credential (for Docker Hub,
+        // an access token rather than the account password).
+        withCredentials([usernamePassword(credentialsId: 'registry-creds',
+                                          usernameVariable: 'REG_USER',
+                                          passwordVariable: 'REG_PASS')]) {
+          sh '''
+            REGISTRY_HOST="${REGISTRY%%/*}"
+            # --password-stdin keeps the token out of the process list and the build log.
+            echo "$REG_PASS" | docker login "$REGISTRY_HOST" -u "$REG_USER" --password-stdin
+            docker tag "$IMAGE_NAME:$IMAGE_TAG" "$REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+            docker push "$REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          '''
+        }
+      }
+      post {
+        always {
+          // Don't leave a logged-in Docker config on the agent for the next job to reuse.
+          sh 'docker logout "${REGISTRY%%/*}" || true'
         }
       }
     }

@@ -1,0 +1,67 @@
+# inventory-api Deployment.
+# IMAGE_PLACEHOLDER is replaced by the pipeline with <registry>/inventory-api:<short-sha>,
+# so the cluster only ever runs an image that passed tests, the quality gate and Trivy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-api
+  namespace: inventory
+  labels:
+    app.kubernetes.io/name: inventory-api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5          # keeps enough ReplicaSets for `kubectl rollout undo`
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inventory-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0            # never drop below 2 serving pods during a deploy
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: inventory-api
+    spec:
+      # Spread the 2 replicas over different nodes when the cluster has them.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: inventory-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000              # the image's "node" user
+        seccompProfile:
+          type: RuntimeDefault
+      automountServiceAccountToken: false   # the app never calls the Kubernetes API
+      terminationGracePeriodSeconds: 20     # server.js closes the listener on SIGTERM
+      containers:
+        - name: app
+          image: IMAGE_PLACEHOLDER
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { memory: 128Mi }       # no CPU limit: avoids throttling, requests still reserve
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

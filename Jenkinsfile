@@ -1,7 +1,6 @@
 // Declarative pipeline for inventory-api.
 // Stages added so far: checkout -> install -> unit tests -> SonarQube analysis -> quality gate ->
-// image build -> Trivy scan -> push (main only).
-// The Kubernetes deploy is added as a later stage.
+// image build -> Trivy scan -> push -> deploy to Kubernetes (push and deploy on main only).
 pipeline {
   agent any
 
@@ -167,6 +166,42 @@ pipeline {
         always {
           // Don't leave a logged-in Docker config on the agent for the next job to reuse.
           sh 'docker logout "${REGISTRY%%/*}" || true'
+        }
+      }
+    }
+
+    stage('Deploy to Kubernetes') {
+      when {
+        expression { env.GIT_BRANCH in ['main', 'origin/main'] }
+      }
+      agent {
+        docker {
+          image 'bitnami/kubectl:1.31'
+          args '--entrypoint='
+          reuseNode true
+        }
+      }
+      steps {
+        // 'kubeconfig' is a Jenkins "Secret file" credential scoped to a deployer service account
+        // that can only manage the inventory namespace - not cluster-admin.
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh '''
+            kubectl apply -f k8s/namespace.yaml -f k8s/service.yaml
+
+            # Swap in the exact image this build pushed; the manifest in git never names a tag.
+            sed "s#IMAGE_PLACEHOLDER#$REGISTRY/$IMAGE_NAME:$IMAGE_TAG#" k8s/deployment.yaml | kubectl apply -f -
+            kubectl -n inventory annotate deployment/inventory-api \
+              kubernetes.io/change-cause="build $BUILD_NUMBER, commit $IMAGE_TAG" --overwrite
+
+            # Readiness probes decide this: if the new pods never become ready, roll back to the
+            # previous ReplicaSet and fail the build, so a bad image never stays half-deployed.
+            if ! kubectl -n inventory rollout status deployment/inventory-api --timeout=180s; then
+              echo "Rollout did not become healthy - rolling back"
+              kubectl -n inventory rollout undo deployment/inventory-api
+              kubectl -n inventory rollout status deployment/inventory-api --timeout=180s
+              exit 1
+            fi
+          '''
         }
       }
     }

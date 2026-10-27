@@ -19,7 +19,9 @@ End-to-end CI/CD with Jenkins for a small Node.js service: unit tests, a SonarQu
 | Trivy image scan (fails on fixable HIGH/CRITICAL, full report in Jenkins) | Done |
 | Push to registry (main only, SHA tag) | Done |
 | Deploy to Kubernetes with automatic rollback | Done |
-| Architecture diagrams, badges, first release | Next |
+| GitHub Actions checks (tests, manifests, Dockerfile lint) | Done |
+| Pipeline and architecture diagrams, badges | Done |
+| First release (v1.0.0) | Done |
 
 ## Pipeline
 
@@ -50,6 +52,40 @@ flowchart LR
     class X,M bad
     class L,Z good
 ```
+
+## Architecture
+
+```mermaid
+flowchart LR
+    dev([Developer]) -- git push / PR --> gh[(GitHub repo)]
+    gh -- every push and PR --> gha[GitHub Actions<br/>tests, kubeconform, hadolint]
+    gh -- webhook / poll --> jenkins
+
+    subgraph ci["ci/docker-compose.yml"]
+        jenkins[Jenkins LTS<br/>+ Docker CLI]
+        sonar[SonarQube 10.7]
+        pg[(PostgreSQL)]
+        sonar --- pg
+    end
+
+    jenkins -- analysis --> sonar
+    sonar -- quality gate webhook --> jenkins
+    jenkins -- docker.sock: build,<br/>Trivy scan --> docker[[Docker engine]]
+    jenkins -- push SHA tag<br/>registry-creds --> reg[(Container registry)]
+
+    subgraph k8s["Kubernetes - namespace inventory (restricted PSS)"]
+        svc[Service<br/>ClusterIP :80]
+        dep[Deployment<br/>2 replicas, maxUnavailable 0]
+        pdb[PodDisruptionBudget<br/>minAvailable 1]
+        svc --> dep
+        pdb -.-> dep
+    end
+
+    jenkins -- kubectl apply + rollout status<br/>kubeconfig: namespace-scoped deployer --> dep
+    reg -- image pull --> dep
+```
+
+Credentials never live in the repo: the SonarQube token comes from `withSonarQubeEnv`, and the registry login and kubeconfig from Jenkins credentials bindings. The kubeconfig belongs to a deployer service account that can only manage the `inventory` namespace.
 
 ## Layout
 

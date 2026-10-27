@@ -21,6 +21,36 @@ End-to-end CI/CD with Jenkins for a small Node.js service: unit tests, a SonarQu
 | Deploy to Kubernetes with automatic rollback | Done |
 | Architecture diagrams, badges, first release | Next |
 
+## Pipeline
+
+Every branch gets the checks; only `main` produces an image in the registry and a rollout. Any red step stops the build there.
+
+```mermaid
+flowchart LR
+    A[Checkout] --> B[npm ci]
+    B --> C[Unit tests<br/>JUnit + coverage]
+    C --> D[SonarQube<br/>analysis]
+    D --> E{Quality<br/>gate}
+    E -- fail --> X[Build fails]
+    E -- pass --> F[Docker build<br/>tag = short SHA]
+    F --> G{Trivy: fixable<br/>HIGH / CRITICAL?}
+    G -- yes --> X
+    G -- no --> H{Branch<br/>is main?}
+    H -- no --> Z[Done:<br/>feedback only]
+    H -- yes --> I[Push image<br/>to registry]
+    I --> J[kubectl apply<br/>SHA-tagged image]
+    J --> K{Rollout ready<br/>in 180 s?}
+    K -- yes --> L[Deployed]
+    K -- no --> M[rollout undo] --> X
+
+    classDef gate fill:#fff4d6,stroke:#c9a227
+    classDef bad fill:#fde2e1,stroke:#c0392b
+    classDef good fill:#e3f4e1,stroke:#2e7d32
+    class E,G,H,K gate
+    class X,M bad
+    class L,Z good
+```
+
 ## Layout
 
 ```

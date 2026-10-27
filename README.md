@@ -1,5 +1,12 @@
 # jenkins-ci-cd-pipeline
 
+[![ci](https://github.com/IpshitaChaudhary/jenkins-ci-cd-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/IpshitaChaudhary/jenkins-ci-cd-pipeline/actions/workflows/ci.yml)
+![Jenkins](https://img.shields.io/badge/Jenkins-declarative_pipeline-D24939?logo=jenkins&logoColor=white)
+![SonarQube](https://img.shields.io/badge/SonarQube-quality_gate-4E9BCD?logo=sonarqube&logoColor=white)
+![Trivy](https://img.shields.io/badge/Trivy-image_scan-1904DA?logo=aqua&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-1.31-326CE5?logo=kubernetes&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=nodedotjs&logoColor=white)
+
 End-to-end CI/CD with Jenkins for a small Node.js service: unit tests, a SonarQube quality gate, a Docker image scanned with Trivy, and a Kubernetes deployment. Built up stage by stage; this README tracks what exists today.
 
 ## Status
@@ -19,6 +26,7 @@ End-to-end CI/CD with Jenkins for a small Node.js service: unit tests, a SonarQu
 ```
 .
 ├── Jenkinsfile           # declarative pipeline
+├── .github/workflows/    # ci.yml: tests, manifest validation, Dockerfile lint
 ├── .trivyignore          # accepted CVEs (reason, owner, expiry) - empty for now
 ├── k8s/                  # namespace (restricted PSS), Deployment, Service + PDB
 ├── ci/                   # local Jenkins + SonarQube (docker compose)
@@ -103,4 +111,5 @@ kubectl -n inventory port-forward svc/inventory-api 8081:80     # http://localho
 - **Git never names an image tag.** `k8s/deployment.yaml` holds `IMAGE_PLACEHOLDER`; the pipeline substitutes the exact SHA-tagged image it just scanned and pushed, so the cluster can only run something that passed every gate.
 - **A bad rollout undoes itself.** `kubectl rollout status` waits on the readiness probes; if new pods aren't ready within 180 s, the pipeline runs `rollout undo` and fails. With `maxUnavailable: 0`, the old pods keep serving the whole time.
 - **Locked-down pods.** Non-root, read-only root filesystem, all capabilities dropped, no service-account token, RuntimeDefault seccomp - and the namespace enforces the `restricted` Pod Security Standard, so a less strict pod is rejected outright.
-- **No secrets in the repo.** The SonarQube URL and token come from `withSonarQubeEnv`; `sonar-project.properties` holds only project settings. Registry credentials will use Jenkins credentials bindings the same way.
+- **No secrets in the repo.** The SonarQube URL and token come from `withSonarQubeEnv`; `sonar-project.properties` holds only project settings. The registry login and kubeconfig come from Jenkins credentials bindings, the registry token goes in through `--password-stdin`, and the agent logs out after the push.
+- **Two layers of checks.** GitHub Actions runs the fast checks on every push and PR (unit tests, `kubeconform -strict` on the manifests, hadolint on the Dockerfile); Jenkins runs the full delivery pipeline with the quality gate, image scan, registry push and deploy.
